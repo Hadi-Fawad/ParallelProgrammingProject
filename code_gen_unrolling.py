@@ -1,0 +1,196 @@
+# the code generator should sweep through unrolling factors to result in a "ideal" file with
+# no loops
+
+
+# print the imports and function definitions
+
+def main():
+    m0 = 32
+    k0 = 3
+    code = f"""
+
+    #include <mpi.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+
+    #ifndef COMPUTE_NAME
+    #define COMPUTE_NAME baseline
+    #endif
+
+    #ifndef DISTRIBUTE_DATA_NAME
+    #define DISTRIBUTE_DATA_NAME baseline_distribute
+    #endif
+
+    #ifndef COLLECT_DATA_NAME
+    #define  COLLECT_DATA_NAME baseline_collect
+    #endif  
+
+
+    #ifndef DISTRIBUTED_ALLOCATE_NAME
+    #define DISTRIBUTED_ALLOCATE_NAME baseline_allocate
+    #endif
+
+
+    #ifndef DISTRIBUTED_FREE_NAME
+    #define DISTRIBUTED_FREE_NAME baseline_free
+    #endif
+
+    void COMPUTE_NAME( int m0, int k0,
+            float *input_distributed,
+            float *weights_distributed,
+            float *output_distributed )
+    {{
+    int rid;
+    int num_ranks;
+    int tag = 0;
+    int root_rid = 0;
+    float res = 0.0f;
+    """
+
+
+    # do the unrolling here
+    # we need two unrolling loops, m0 for the outside and k0 for the inside
+    for i in range(m0):
+        code += "res = 0.0f;\n"
+        for j in range(k0):
+            code += f"""res += input_distributed[{(i+j) % m0}] * weights_distributed[{j}];\n"""
+        code += F"""output_distributed[{i}] = res;\n"""
+
+    code += f""" }}
+
+
+    // Create the buffers on each node
+    void DISTRIBUTED_ALLOCATE_NAME( int m0, int k0,
+                    float **input_distributed,
+                    float **weights_distributed,
+                    float **output_distributed )
+    {{
+
+    int rid;
+    int num_ranks;
+    int tag = 0;
+    MPI_Status  status;
+    int root_rid = 0;
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &rid);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
+
+    if(rid == root_rid )
+        {{
+        /* This block will only run on the node that matches root_rid .*/
+
+        *input_distributed=(float *)malloc(sizeof(float)*m0);
+        *output_distributed=(float *)malloc(sizeof(float)*m0);
+        *weights_distributed=(float *)malloc(sizeof(float)*k0);
+        }}
+    else
+        {{
+        /* This will run on all other nodes whose rid is not root_rid. */
+        }}
+    }}
+
+    void DISTRIBUTE_DATA_NAME( int m0, int k0,
+                float *input_sequential,
+                float *weights_sequential,
+                float *input_distributed,
+                float *weights_distributed )
+    {{
+
+
+    int rid;
+    int num_ranks;
+    int tag = 0;
+    MPI_Status  status;
+    int root_rid = 0;
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &rid);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
+
+    if(rid == root_rid )
+        {{
+        /* This block will only run on the node that matches root_rid .*/
+
+        // Distribute the inputs
+        for( int i0 = 0; i0 < m0; ++i0 )
+        input_distributed[i0] = input_sequential[i0];
+    
+        // Distribute the weights
+        for( int p0 = 0; p0 < k0; ++p0 )
+        weights_distributed[p0] = weights_sequential[p0];
+        }}
+    else
+        {{
+        /* This will run on all other nodes whose rid is not root_rid. */      
+        }}
+
+    }}
+
+
+
+    void COLLECT_DATA_NAME( int m0, int k0,
+                float *output_distributed,
+                float *output_sequential )
+    {{
+
+        int rid;
+        int num_ranks;
+        int tag = 0;
+        MPI_Status  status;
+        int root_rid = 0;
+
+        MPI_Comm_rank(MPI_COMM_WORLD, &rid);
+        MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
+
+        if(rid == root_rid )
+        {{
+        /* This block will only run on the node that matches root_rid .*/
+    
+        // Collect the output
+        for( int i0 = 0; i0 < m0; ++i0 )
+        output_sequential[i0] = output_distributed[i0];
+        }}
+        else
+        {{
+        /* This will run on all other nodes whose rid is not root_rid. */      
+        }}
+    }}
+
+
+    void DISTRIBUTED_FREE_NAME( int m0, int k0,
+                    float *input_distributed,
+                    float *weights_distributed,
+                    float *output_distributed )
+    {{
+        
+    int rid;
+    int num_ranks;
+    int tag = 0;
+    MPI_Status  status;
+    int root_rid = 0;
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &rid);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
+
+    if(rid == root_rid )
+        {{
+        /* This block will only run on the node that matches root_rid .*/
+
+        free(input_distributed);
+        free(weights_distributed);
+        free(output_distributed);
+
+        }}
+    else
+        {{
+        /* This will run on all other nodes whose rid is not root_rid. */  
+        }}
+    }}
+    """
+
+    filename ="generated.c"
+    with open(filename, "w") as f:
+        f.write(code)
+
+
+if __name__ == "__main__":
+    main()
